@@ -1,0 +1,49 @@
+# Cada vez que publicas una release, este robot toma el instalador
+# (MercHosting_X.Y.Z_x64-setup.exe) y sube una copia llamada
+# MercHosting-setup.exe en esa misma release.
+# Así el botón "Descargar" de la web siempre baja la última versión.
+# El archivo original no se toca (lo usa el actualizador / latest.json).
+ 
+name: Instalador con nombre fijo
+ 
+on:
+  release:
+    types: [published]
+  workflow_dispatch:   # botón "Run workflow" para lanzarlo a mano
+ 
+permissions:
+  contents: write
+ 
+jobs:
+  copiar:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Subir MercHosting-setup.exe a la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          # Si se lanzó a mano, usa la última release
+          if [ -z "$TAG" ]; then
+            TAG=$(gh release view --repo "$REPO" --json tagName -q .tagName)
+          fi
+          echo "Release: $TAG"
+ 
+          # Espera a que el instalador esté subido (hasta ~10 minutos)
+          FILE=""
+          for i in $(seq 1 20); do
+            FILE=$(gh release view "$TAG" --repo "$REPO" --json assets -q '.assets[].name' \
+                   | grep -E -- '-setup\.exe$' | grep -v '^MercHosting-setup\.exe$' | head -n1 || true)
+            [ -n "$FILE" ] && break
+            echo "Todavía no hay instalador, espero 30 s..."
+            sleep 30
+          done
+          if [ -z "$FILE" ]; then echo "No encontré ningún *-setup.exe en $TAG"; exit 1; fi
+          echo "Instalador encontrado: $FILE"
+ 
+          gh release download "$TAG" --repo "$REPO" --pattern "$FILE" --dir .
+          cp "$FILE" MercHosting-setup.exe
+          gh release upload "$TAG" MercHosting-setup.exe --repo "$REPO" --clobber
+          echo "Listo: MercHosting-setup.exe subido a $TAG"
+ 
